@@ -1410,276 +1410,301 @@ task.spawn(function()
 end)
 
 -- ══════════════════════════════════════════════════════════════
---  Player ESP (mm2-style: split data/render, per-item inventory)
+--  Player ESP
 -- ══════════════════════════════════════════════════════════════
-local ActivePlayerESPs = {}
+local ESP = {}
+local function createESP(player)
+    if player == LocalPlayer then return end
+    local highlight = Instance.new("Highlight")
+    highlight.FillTransparency    = 0.5
+    highlight.OutlineTransparency = 0
+    highlight.Enabled = false
+    highlight.Parent  = game.CoreGui
 
-local MeshDB = {}
-local MeshDBLoaded = false
-local function LoadMeshDB()
-    if MeshDBLoaded then return end
-    MeshDBLoaded = true
-    if not Items then return end
-    local function scan(folder)
-        for _, item in ipairs(folder:GetChildren()) do
-            if item:IsA("Tool") then
-                local handle = item:FindFirstChild("Handle")
-                local dName = item:GetAttribute("DisplayName") or item:GetAttribute("ItemName") or item.Name
-                if tonumber(dName) then
-                    for _, cd in ipairs(item:GetChildren()) do
-                        if cd:IsA("StringValue") and (cd.Name == "ItemName" or cd.Name == "WeaponName" or cd.Name == "DisplayName") then
-                            dName = cd.Value; break
-                        end
-                    end
-                end
-                if handle then
-                    local mesh = handle:FindFirstChildOfClass("SpecialMesh")
-                    if mesh and mesh.MeshId ~= "" then
-                        MeshDB[mesh.MeshId] = dName
-                        if mesh.TextureId ~= "" then MeshDB[mesh.MeshId .. mesh.TextureId] = dName end
-                    elseif handle:IsA("MeshPart") and handle.MeshId ~= "" then
-                        MeshDB[handle.MeshId] = dName
-                        if handle.TextureID ~= "" then MeshDB[handle.MeshId .. handle.TextureID] = dName end
-                    end
-                end
-            elseif item:IsA("Folder") then
-                scan(item)
-            end
-        end
-    end
-    pcall(function() scan(Items) end)
+    local name = Drawing.new("Text")
+    name.Size    = 12
+    name.Center  = true
+    name.Outline = true
+    name.Color   = Color3.new(1, 1, 1)
+    name.Visible = false
+    name.Font    = 3
+
+    local info = Drawing.new("Text")
+    info.Size    = 11
+    info.Center  = true
+    info.Outline = true
+    info.Color   = Color3.new(1, 1, 1)
+    info.Visible = false
+    info.Font    = 3
+
+    local hpBar = Drawing.new("Square")
+    hpBar.Filled = true
+    hpBar.Transparency = 0.9
+    hpBar.Visible = false
+
+    local hpBg = Drawing.new("Square")
+    hpBg.Filled = false
+    hpBg.Thickness = 1
+    hpBg.Color = Color3.fromRGB(0, 0, 0)
+    hpBg.Transparency = 0.9
+    hpBg.Visible = false
+
+    ESP[player] = {Highlight = highlight, Name = name, Info = info, HpBar = hpBar, HpBg = hpBg}
 end
 
-local ItemNameCache = setmetatable({}, {__mode = "k"})
-local function GetItemRealName(tool)
-    if ItemNameCache[tool] then return ItemNameCache[tool] end
-    local name = tostring(tool.Name)
-    local attr = tool:GetAttribute("ItemName") or tool:GetAttribute("DisplayName")
-    if attr then name = tostring(attr) end
-    if tonumber(name) and tool:IsA("Tool") and tool.ToolTip and tool.ToolTip ~= "" then
-        name = tool.ToolTip
-    end
-    if tonumber(name) then
-        LoadMeshDB()
-        local handle = tool:FindFirstChild("Handle") or tool
-        if handle then
-            local mesh = handle:FindFirstChildOfClass("SpecialMesh")
-            if mesh and mesh.MeshId ~= "" then
-                local res = MeshDB[mesh.MeshId .. (mesh.TextureId or "")] or MeshDB[mesh.MeshId]
-                if res then name = res end
-            elseif handle:IsA("MeshPart") and handle.MeshId ~= "" then
-                local res = MeshDB[handle.MeshId .. (handle.TextureID or "")] or MeshDB[handle.MeshId]
-                if res then name = res end
-            end
-        end
-    end
-    if tonumber(name) then
-        for _, child in ipairs(tool:GetChildren()) do
-            if child:IsA("StringValue") and (child.Name == "ItemName" or child.Name == "WeaponName" or child.Name == "DisplayName") then
-                name = child.Value; break
-            end
-        end
-    end
-    local cleaned = string.gsub(tostring(name), "[Ii][Tt][Ee][Mm]", "")
-    cleaned = string.match(cleaned, "^%s*(.-)%s*$")
-    local finalName = (cleaned ~= "" and cleaned) or name
-    ItemNameCache[tool] = finalName
-    return finalName
-end
-
-local RarityColorsESP = {
-    ["Common"]    = Color3.fromRGB(200, 200, 200),
-    ["Uncommon"]  = Color3.fromRGB(99, 255, 52),
-    ["Rare"]      = Color3.fromRGB(51, 170, 255),
-    ["Epic"]      = Color3.fromRGB(237, 44, 255),
-    ["Legendary"] = Color3.fromRGB(255, 150, 0),
-    ["Omega"]     = Color3.fromRGB(255, 20, 51),
-}
-
-local function CreateESPText(color)
-    local t = Drawing.new("Text")
-    t.Size = 13
-    t.Center = true
-    t.Outline = true
-    t.OutlineColor = Color3.new(0, 0, 0)
-    t.Color = color or Color3.new(1, 1, 1)
-    t.Font = 2
-    t.Visible = false
-    return t
-end
-
-local function DestroyESPData(data)
-    if not data then return end
-    pcall(function() if data.text then data.text:Remove() end end)
-    pcall(function() if data.highlight then data.highlight:Destroy() end end)
-    if data.invTexts then
-        for _, d in ipairs(data.invTexts) do pcall(function() d:Remove() end) end
-    end
-end
-
-local function TrimInvDraw(data, keepCount)
-    if not data.invTexts then return end
-    for i = #data.invTexts, keepCount + 1, -1 do
-        pcall(function() data.invTexts[i]:Remove() end)
-        data.invTexts[i] = nil
-    end
-end
-
-local function GetPlayerTools(player)
-    local out = {}
-    local bp = player:FindFirstChild("Backpack")
-    if bp then
-        for _, item in ipairs(bp:GetChildren()) do
-            if item:IsA("Tool") and item.Name ~= "Fists" then out[#out + 1] = item end
-        end
-    end
-    local char = player.Character
-    if char then
-        for _, item in ipairs(char:GetChildren()) do
-            if item:IsA("Tool") and item.Name ~= "Fists" then out[#out + 1] = item end
-        end
-    end
-    return out
-end
-
+for _, p in pairs(Players:GetPlayers()) do createESP(p) end
+Players.PlayerAdded:Connect(createESP)
 Players.PlayerRemoving:Connect(function(player)
-    if ActivePlayerESPs[player] then
-        DestroyESPData(ActivePlayerESPs[player])
-        ActivePlayerESPs[player] = nil
+    local data = ESP[player]
+    if data then
+        if data.Highlight then data.Highlight:Destroy() end
+        if data.Name      then data.Name:Remove()      end
+        if data.Info      then data.Info:Remove()      end
+        if data.HpBar     then data.HpBar:Remove()     end
+        if data.HpBg      then data.HpBg:Remove()      end
+        ESP[player] = nil
     end
 end)
 
--- ── Data Update Loop (every 0.5s) ────────────────────────────
-task.spawn(function()
-    while true do
-        task.wait(0.5)
-        if not nameESPEnabled then
-            for _, data in pairs(ActivePlayerESPs) do
-                if data.text then data.text.Visible = false end
-                if data.invTexts then for _, d in ipairs(data.invTexts) do d.Visible = false end end
-                if data.highlight then data.highlight.Enabled = false end
-            end
-        else
-            for _, p in ipairs(Players:GetPlayers()) do
-                if p ~= LocalPlayer then
-                    pcall(function()
-                        local char = p.Character
-                        local hum = char and char:FindFirstChildOfClass("Humanoid")
-                        local root = char and (char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Head"))
+local function getESPColor(player)
+    local char = player.Character
+    local inSplash = player:GetAttribute("InSplashScreen")
+        or (char and char:GetAttribute("InSplashScreen"))
+    local inSafe = player:GetAttribute("IsInSafeZone")
+        or (char and char:GetAttribute("IsInSafeZone"))
 
-                        if char and hum and root and hum.Health > 0 then
-                            if not ActivePlayerESPs[p] then
-                                local nameText = CreateESPText(Color3.new(1, 1, 1))
-                                local hl = nil
-                                pcall(function()
-                                    hl = Instance.new("Highlight")
-                                    hl.FillTransparency = 0.5
-                                    hl.OutlineTransparency = 0
-                                    hl.Enabled = false
-                                    hl.Parent = game.CoreGui
-                                end)
-                                ActivePlayerESPs[p] = {text = nameText, invTexts = {}, lastStr = "", rootPart = nil, highlight = hl}
-                            end
-
-                            local data = ActivePlayerESPs[p]
-                            data.rootPart = root
-
-                            if data.highlight then
-                                if highlightEnabled then
-                                    data.highlight.Enabled = true
-                                    data.highlight.Adornee = char
-                                    local hpPct = hum.Health / math.max(hum.MaxHealth, 1)
-                                    data.highlight.FillColor = Color3.fromRGB(255 * (1 - hpPct), 255 * hpPct, 0)
-                                else
-                                    data.highlight.Enabled = false
-                                end
-                            end
-
-                            local dist = 0
-                            if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
-                                dist = math.floor((LocalPlayer.Character.HumanoidRootPart.Position - root.Position).Magnitude)
-                            end
-                            local health = math.floor(hum.Health)
-                            local maxHealth = math.floor(hum.MaxHealth)
-
-                            local espColor = Color3.new(1, 1, 1)
-                            local inSafe = p:GetAttribute("IsInSafeZone") or (char and char:GetAttribute("IsInSafeZone"))
-                            local inSplash = p:GetAttribute("InSplashScreen") or (char and char:GetAttribute("InSplashScreen"))
-                            if inSplash then espColor = Color3.fromRGB(0, 200, 255)
-                            elseif inSafe then espColor = Color3.fromRGB(0, 255, 0)
-                            elseif isPlayerExcluded(p.Name) then espColor = Color3.fromRGB(0, 255, 0)
-                            elseif aimTarget == p then espColor = Color3.fromRGB(255, 0, 0) end
-
-                            local newStr = string.format("[%dm] %s [%d/%d]", dist, p.Name, health, maxHealth)
-                            if newStr ~= data.lastStr then
-                                data.text.Text = newStr
-                                data.lastStr = newStr
-                            end
-                            data.text.Color = espColor
-
-                            local tools = GetPlayerTools(p)
-                            for i = 1, #tools do
-                                if not data.invTexts[i] then
-                                    local draw = CreateESPText(Color3.fromRGB(200, 200, 200))
-                                    draw.Size = 11
-                                    data.invTexts[i] = draw
-                                end
-                                local invDraw = data.invTexts[i]
-                                local rarity = tools[i]:GetAttribute("RarityName") or "Common"
-                                local color = RarityColorsESP[rarity] or Color3.fromRGB(200, 200, 200)
-                                local equipped = tools[i].Parent == char and " [E]" or ""
-                                local itemText = "[" .. GetItemRealName(tools[i]) .. equipped .. "]"
-                                if invDraw.Text ~= itemText then invDraw.Text = itemText end
-                                invDraw.Color = color
-                            end
-                            TrimInvDraw(data, #tools)
-                        elseif ActivePlayerESPs[p] then
-                            ActivePlayerESPs[p].text.Visible = false
-                            if ActivePlayerESPs[p].invTexts then
-                                for _, d in ipairs(ActivePlayerESPs[p].invTexts) do d.Visible = false end
-                            end
-                            if ActivePlayerESPs[p].highlight then ActivePlayerESPs[p].highlight.Enabled = false end
-                        end
-                    end)
-                end
-            end
-        end
-
-        for pl, _ in pairs(ActivePlayerESPs) do
-            if not pl or not pl.Parent then
-                DestroyESPData(ActivePlayerESPs[pl])
-                ActivePlayerESPs[pl] = nil
-            end
-        end
+    if inSplash then
+        return Color3.fromRGB(0, 200, 255)
+    elseif inSafe then
+        return Color3.fromRGB(0, 255, 0)
+    elseif aimTarget == player then
+        return Color3.fromRGB(255, 0, 0)
     end
-end)
+    return Color3.new(1, 1, 1)
+end
 
--- ── Render Loop (throttled every 2 frames — position update only) ──
-local _espFrame = 0
 RunService.RenderStepped:Connect(function()
-    _espFrame = _espFrame + 1
-    if _espFrame % 2 ~= 0 then return end
-    if not nameESPEnabled then return end
+    for player, data in pairs(ESP) do
+        if player.Character then
+            local hum  = player.Character:FindFirstChildOfClass("Humanoid")
+            local head = player.Character:FindFirstChild("Head")
+            local root = player.Character:FindFirstChild("HumanoidRootPart")
+            if hum and head and root and hum.Health > 0 then
 
-    for _, data in pairs(ActivePlayerESPs) do
-        if data.text and data.rootPart and data.rootPart.Parent then
-            local anchor = data.rootPart.Position + (data.rootPart.Name == "Head" and Vector3.new(0, 1.5, 0) or Vector3.new(0, 3, 0))
-            local pos, onScreen = Camera:WorldToViewportPoint(anchor)
-            data.text.Visible = onScreen
-            if onScreen then
-                data.text.Position = Vector2.new(pos.X, pos.Y)
-                if data.invTexts then
-                    for i, invDraw in ipairs(data.invTexts) do
-                        invDraw.Visible = true
-                        invDraw.Position = Vector2.new(pos.X, pos.Y + 14 + ((i - 1) * 13))
-                    end
+                -- Highlight
+                if highlightEnabled then
+                    data.Highlight.Enabled = true
+                    data.Highlight.Adornee = player.Character
+                    local hpPercent = hum.Health / hum.MaxHealth
+                    data.Highlight.FillColor = Color3.fromRGB(255 * (1 - hpPercent), 255 * hpPercent, 0)
+                else
+                    data.Highlight.Enabled = false
+                end
+
+                local posHead, visHead = Camera:WorldToViewportPoint(head.Position)
+                local posFoot, visFoot = Camera:WorldToViewportPoint(root.Position - Vector3.new(0, 3, 0))
+
+                -- Name
+                if nameESPEnabled and visHead then
+                    data.Name.Visible  = true
+                    data.Name.Text     = player.Name
+                    data.Name.Position = Vector2.new(posHead.X, posHead.Y - 20)
+                    data.Name.Color    = getESPColor(player)
+                else
+                    data.Name.Visible = false
+                end
+
+                -- Distance
+                if distanceESPEnabled and visFoot and LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
+                    local dist = math.floor((LocalPlayer.Character.HumanoidRootPart.Position - root.Position).Magnitude)
+                    local pct = math.floor(hum.Health / math.max(hum.MaxHealth, 1) * 100)
+                    data.Info.Visible  = true
+                    data.Info.Text     = pct .. "% | " .. dist .. "M"
+                    data.Info.Position = Vector2.new(posFoot.X, posFoot.Y + 10)
+                    data.Info.Color    = getESPColor(player)
+                else
+                    data.Info.Visible = false
                 end
             else
-                if data.invTexts then
-                    for _, invDraw in ipairs(data.invTexts) do invDraw.Visible = false end
-                end
+                data.Highlight.Enabled = false
+                data.Name.Visible      = false
+                data.Info.Visible      = false
             end
         end
+    end
+end)
+
+-- ══════════════════════════════════════════════════════════════
+--  Inventory Viewer (Billboard)
+-- ══════════════════════════════════════════════════════════════
+local function registerItems(folder)
+    for _, tool in ipairs(folder:GetChildren()) do
+        if tool:IsA("Tool") then
+            local handle    = tool:FindFirstChild("Handle")
+            local displayName = tool:GetAttribute("DisplayName") or tool.Name
+            local itemId    = tool:GetAttribute("ItemId") or tool:GetAttribute("Id") or tool.Name
+            local rarity    = tool:GetAttribute("RarityName") or "Common"
+            local imageId   = tool:GetAttribute("ImageId") or "rbxassetid://7072725737"
+            local key
+            if handle then
+                local mesh = handle:FindFirstChildOfClass("SpecialMesh")
+                if mesh and mesh.MeshId ~= "" then
+                    key = mesh.MeshId .. (mesh.TextureId or "") .. "_RARITY_" .. rarity
+                elseif handle:IsA("MeshPart") and handle.MeshId ~= "" then
+                    key = handle.MeshId .. (handle.TextureID or "") .. "_RARITY_" .. rarity
+                end
+            end
+            if not key and itemId and itemId ~= "" and itemId ~= tool.Name then
+                key = "ITEMID_" .. itemId .. "_RARITY_" .. rarity
+            end
+            if not key then
+                key = "NAME_" .. displayName .. "_" .. tool.Name .. "_RARITY_" .. rarity
+            end
+            WeaponRegistry[key] = { Name = displayName, Rarity = rarity, ImageId = imageId, ToolName = tool.Name }
+        end
+    end
+end
+
+local function getItemKey(tool)
+    local handle = tool:FindFirstChild("Handle")
+    local displayName = tool:GetAttribute("DisplayName") or tool.Name
+    local itemId = tool:GetAttribute("ItemId") or tool:GetAttribute("Id") or tool.Name
+    local rarity = tool:GetAttribute("RarityName") or "Common"
+    if handle then
+        local mesh = handle:FindFirstChildOfClass("SpecialMesh")
+        if mesh and mesh.MeshId ~= "" then return mesh.MeshId .. (mesh.TextureId or "") .. "_RARITY_" .. rarity end
+        if handle:IsA("MeshPart") and handle.MeshId ~= "" then return handle.MeshId .. (handle.TextureID or "") .. "_RARITY_" .. rarity end
+    end
+    if itemId and itemId ~= "" and itemId ~= tool.Name then return "ITEMID_" .. itemId .. "_RARITY_" .. rarity end
+    return "NAME_" .. displayName .. "_" .. tool.Name .. "_RARITY_" .. rarity
+end
+
+local function getWeaponInfo(tool)
+    if not tool or not tool:IsA("Tool") then return nil end
+    return WeaponRegistry[getItemKey(tool)]
+end
+
+-- ── Inventory ESP (Drawing) ───────────────────────────────────
+local InventoryDrawings = {}
+
+local function getPlayerTools(player)
+    local tools = {}
+    local char = player.Character
+    for _, bagName in ipairs({"Backpack", "StarterGear", "StarterPack"}) do
+        local bag = player:FindFirstChild(bagName)
+        if bag then
+            for _, t in ipairs(bag:GetChildren()) do
+                if t:IsA("Tool") and t.Name ~= "Fists" then table.insert(tools, t) end
+            end
+        end
+    end
+    if char then
+        for _, t in ipairs(char:GetChildren()) do
+            if t:IsA("Tool") and t.Name ~= "Fists" then table.insert(tools, t) end
+        end
+    end
+    return tools
+end
+
+local function clearInventoryDrawings(player)
+    local data = InventoryDrawings[player]
+    if data then
+        for _, d in ipairs(data.drawings) do
+            pcall(function() d:Remove() end)
+        end
+        InventoryDrawings[player] = nil
+    end
+end
+
+local function createBillboardForPlayer(player) end
+
+local function setInventoryESPEnabled(enabled)
+    inventoryESPEnabled = enabled
+    if not enabled then
+        for _, player in ipairs(Players:GetPlayers()) do
+            clearInventoryDrawings(player)
+        end
+        PlayerBillboards = {}
+    end
+end
+
+RunService.RenderStepped:Connect(function()
+    if not inventoryESPEnabled then
+        for player in pairs(InventoryDrawings) do
+            clearInventoryDrawings(player)
+        end
+        return
+    end
+
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player == Players.LocalPlayer then continue end
+        local char = player.Character
+        if not char then clearInventoryDrawings(player) continue end
+        local head = char:FindFirstChild("Head")
+        local root = char:FindFirstChild("HumanoidRootPart")
+        if not head or not root then clearInventoryDrawings(player) continue end
+
+        local tools = getPlayerTools(player)
+        local infos = {}
+        for _, tool in ipairs(tools) do
+            local info = getWeaponInfo(tool)
+            if info then table.insert(infos, info) end
+        end
+
+        if not InventoryDrawings[player] then
+            InventoryDrawings[player] = { drawings = {} }
+        end
+        local data = InventoryDrawings[player]
+
+        while #data.drawings < #infos do
+            local d = Drawing.new("Text")
+            d.Size    = 8
+            d.Center  = true
+            d.Outline = true
+            d.Font    = 4
+            d.Visible = false
+            table.insert(data.drawings, d)
+        end
+
+        local posHead, visHead = Camera:WorldToViewportPoint(head.Position)
+        local posFoot, visFoot = Camera:WorldToViewportPoint(root.Position - Vector3.new(0, 3, 0))
+
+        local baseY = posFoot.Y + 28
+
+        for idx, info in ipairs(infos) do
+            local d = data.drawings[idx]
+            if visFoot then
+                d.Text     = "[" .. info.Name .. "]"
+                d.Color    = RarityColors[info.Rarity] or Color3.new(1, 1, 1)
+                d.Position = Vector2.new(posFoot.X, baseY + ((idx - 1) * 13))
+                d.Visible  = true
+            else
+                d.Visible = false
+            end
+        end
+
+        for idx = #infos + 1, #data.drawings do
+            data.drawings[idx].Visible = false
+        end
+    end
+end)
+
+for _, folderName in ipairs({"gun", "melee", "throwable", "consumable", "farming", "misc", "rod", "fish"}) do
+    local folder = Items:FindFirstChild(folderName)
+    if folder then registerItems(folder) end
+end
+
+Players.PlayerAdded:Connect(function(player)
+    player.CharacterAdded:Connect(function()
+        clearInventoryDrawings(player)
+    end)
+end)
+
+Players.PlayerRemoving:Connect(function(player)
+    clearInventoryDrawings(player)
+    if PlayerBillboards[player] then
+        PlayerBillboards[player]:Destroy()
+        PlayerBillboards[player] = nil
     end
 end)
 
