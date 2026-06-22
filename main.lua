@@ -143,15 +143,15 @@ local function GetTarget()
                     local screenPos = Vector2.new(pos.X,pos.Y)
                     local dist = (screenPos - center).Magnitude
                     if dist <= FOV then
-                        local distFromRoot = (root.Position - LocalPlayer.Character.HumanoidRootPart.Position).Magnitude
                         if LookHeadEnabled then
-                            if distFromRoot <= 350 then
+                            local distFromRoot = (root.Position - LocalPlayer.Character.HumanoidRootPart.Position).Magnitude
+                            if distFromRoot <= 500 then
                                 if dist < closestDist then
                                     closestDist = dist
                                     closest = root
                                 end
                             end
-                        else
+                        elseif AimEnabled then
                             if Visible(root) then
                                 if dist < closestDist then
                                     closestDist = dist
